@@ -1,18 +1,23 @@
-"""Fills storage/ from real retailer photos via the image_reconstruction
-pipeline's HTTP API — the production replacement for seed_demo_products.py.
+"""Fills the shared product catalog (a Cloudflare R2 bucket) from real
+retailer photos via the image_reconstruction pipeline's HTTP API -- the
+production replacement for seed_demo_products.py.
 
 For each product listed in a manifest: finds and crops the product out of its
-photo (POST /api/detect — photos may show clutter or more than one object),
+photo (POST /api/detect -- photos may show clutter or more than one object),
 generates a clean angled studio view of the crop (POST /api/generate-view),
-reconstructs a GLB from that view (POST /api/generate-mesh), and writes the
-result into storage/ in exactly the shape storage.py already expects.
-catalog_api/ and retailer_site/ don't change either way.
+reconstructs a GLB from that view (POST /api/generate-mesh), and uploads the
+result into the same R2 bucket catalog_api reads from -- catalog_api/storage.py
+has the exact key layout (products.json + models/<id>.glb). A product is live
+on the deployed catalog_api as soon as this script finishes; no redeploy needed.
 
 Needs the image_reconstruction backend running with FAL_KEY set there (see
-../../image_reconstruction/README.md) — this script only talks to it over
-HTTP, the same way retailer_site talks to catalog_api. Each fal.ai call costs
-real money (SERVICES_AND_COSTS.md in that project); a product whose GLB
-already exists in storage/models/ is skipped on rerun.
+../../image_reconstruction/README.md) -- this script only talks to it over
+HTTP, the same way retailer_site talks to catalog_api. Also needs R2
+credentials in the environment: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
+R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME (the same ones catalog_api uses).
+
+Each fal.ai call costs real money (SERVICES_AND_COSTS.md in that project); a
+product whose GLB already exists in the bucket is skipped on rerun.
 
 Run:  python ingest/build_from_photos.py ingest/products_input.json
 """
@@ -23,31 +28,67 @@ import argparse
 import base64
 import json
 import mimetypes
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import boto3
 import requests
+from botocore.client import Config
+from botocore.exceptions import ClientError
 from PIL import Image
-
-STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
-MODELS_DIR = STORAGE_DIR / "models"
-PRODUCTS_FILE = STORAGE_DIR / "products.json"
 
 BACKEND_URL = "http://localhost:8000"  # image_reconstruction/server.py
 IMAGE_MODEL = "fal-ai/nano-banana/edit"  # cheap default view-generation model
 MESH_MODEL = "fal-ai/trellis"  # cheap default image-to-3D model
 CROP_MARGIN = 0.08  # fraction of box size added on each side before generate-view
 
-
-def _load_catalog() -> list[dict[str, Any]]:
-    if not PRODUCTS_FILE.exists():
-        return []
-    return json.loads(PRODUCTS_FILE.read_text())
+PRODUCTS_KEY = "products.json"
+MODELS_PREFIX = "models/"
 
 
-def _save_catalog(catalog: list[dict[str, Any]]) -> None:
-    PRODUCTS_FILE.write_text(json.dumps(catalog, indent=2))
+def _required(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is not set -- this script needs the same R2 credentials as catalog_api")
+    return value
+
+
+def _r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{_required('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
+        aws_access_key_id=_required("R2_ACCESS_KEY_ID"),
+        aws_secret_access_key=_required("R2_SECRET_ACCESS_KEY"),
+        config=Config(signature_version="s3v4"),
+        region_name="auto",
+    )
+
+
+def _load_catalog(r2, bucket: str) -> list[dict[str, Any]]:
+    try:
+        obj = r2.get_object(Bucket=bucket, Key=PRODUCTS_KEY)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return []
+        raise
+    return json.loads(obj["Body"].read())
+
+
+def _save_catalog(r2, bucket: str, catalog: list[dict[str, Any]]) -> None:
+    r2.put_object(
+        Bucket=bucket, Key=PRODUCTS_KEY,
+        Body=json.dumps(catalog, indent=2).encode(), ContentType="application/json",
+    )
+
+
+def _model_exists(r2, bucket: str, model_file: str) -> bool:
+    try:
+        r2.head_object(Bucket=bucket, Key=MODELS_PREFIX + model_file)
+        return True
+    except ClientError:
+        return False
 
 
 def _data_url(path: Path) -> str:
@@ -89,7 +130,7 @@ def _crop_to_data_url(photo: Path, box: list[float], margin: float) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 
-def build_product(entry: dict[str, Any], photo: Path, backend: str) -> dict[str, Any]:
+def build_product(entry: dict[str, Any], photo: Path, backend: str, r2, bucket: str) -> dict[str, Any]:
     print(f"  {entry['id']}: detecting object in {photo.name}...")
     detect = requests.post(f"{backend}/api/detect", json={"image": _data_url(photo)}, timeout=60)
     detect.raise_for_status()
@@ -120,9 +161,12 @@ def build_product(entry: dict[str, Any], photo: Path, backend: str) -> dict[str,
     mesh_data = mesh.json()
 
     model_file = f"{entry['id']}.glb"
-    (MODELS_DIR / model_file).write_bytes(_decode_data_url(mesh_data["mesh"]))
+    r2.put_object(
+        Bucket=bucket, Key=MODELS_PREFIX + model_file,
+        Body=_decode_data_url(mesh_data["mesh"]), ContentType="model/gltf-binary",
+    )
     cost = (view_data.get("cost") or 0) + (mesh_data.get("cost") or 0)
-    print(f"    wrote {model_file} ({mesh_data['vertices']} verts) -- ~${cost:.3f}")
+    print(f"    uploaded {model_file} ({mesh_data['vertices']} verts) -- ~${cost:.3f}")
 
     return {
         "id": entry["id"],
@@ -148,22 +192,22 @@ def main() -> None:
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text())
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    catalog = {p["id"]: p for p in _load_catalog()}
+    r2 = _r2_client()
+    bucket = _required("R2_BUCKET_NAME")
     backend = args.backend.rstrip("/")
+    catalog = {p["id"]: p for p in _load_catalog(r2, bucket)}
 
     for entry in manifest:
         model_file = f"{entry['id']}.glb"
-        dest = MODELS_DIR / model_file
-        if dest.exists():
-            print(f"  {entry['id']}: {model_file} already present, skipping reconstruction")
+        if _model_exists(r2, bucket, model_file):
+            print(f"  {entry['id']}: {model_file} already in R2, skipping reconstruction")
             catalog[entry["id"]] = _metadata_only(entry, model_file)
             continue
         photo = args.manifest.parent / entry["photo"]
-        catalog[entry["id"]] = build_product(entry, photo, backend)
+        catalog[entry["id"]] = build_product(entry, photo, backend, r2, bucket)
 
-    _save_catalog(list(catalog.values()))
-    print(f"Wrote {len(catalog)} products to {PRODUCTS_FILE}")
+    _save_catalog(r2, bucket, list(catalog.values()))
+    print(f"Wrote {len(catalog)} products to R2 bucket {bucket!r}")
 
 
 if __name__ == "__main__":

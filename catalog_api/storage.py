@@ -1,23 +1,50 @@
-"""Local storage for the demo product catalog: a JSON metadata file plus a
-directory of GLB mesh files (../storage). Stands in for a real database +
-object store — swapping either out later means changing only this module.
+"""Shared storage for the product catalog: a products.json object plus GLB
+mesh objects in a Cloudflare R2 bucket (S3-compatible). ingest/build_from_photos.py
+writes to this same bucket, so a new reconstruction is live here as soon as
+it's uploaded -- no redeploy needed. Swapping the backing store again later
+means changing only this module.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
 from typing import Any
 
-STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
-PRODUCTS_FILE = STORAGE_DIR / "products.json"
-MODELS_DIR = STORAGE_DIR / "models"
+import boto3
+from botocore.client import Config
+from botocore.exceptions import ClientError
+
+PRODUCTS_KEY = "products.json"
+MODELS_PREFIX = "models/"
+
+
+def _required(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is not set -- catalog_api needs R2 credentials to start")
+    return value
+
+
+_BUCKET = _required("R2_BUCKET_NAME")
+_client = boto3.client(
+    "s3",
+    endpoint_url=f"https://{_required('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
+    aws_access_key_id=_required("R2_ACCESS_KEY_ID"),
+    aws_secret_access_key=_required("R2_SECRET_ACCESS_KEY"),
+    config=Config(signature_version="s3v4"),
+    region_name="auto",
+)
 
 
 def _load() -> list[dict[str, Any]]:
-    if not PRODUCTS_FILE.exists():
-        return []
-    return json.loads(PRODUCTS_FILE.read_text())
+    try:
+        obj = _client.get_object(Bucket=_BUCKET, Key=PRODUCTS_KEY)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return []
+        raise
+    return json.loads(obj["Body"].read())
 
 
 def list_products() -> list[dict[str, Any]]:
@@ -32,9 +59,14 @@ def get_product(product_id: str) -> dict[str, Any] | None:
     return None
 
 
-def model_path(product_id: str) -> Path | None:
+def model_bytes(product_id: str) -> bytes | None:
     for p in _load():
         if p["id"] == product_id:
-            path = MODELS_DIR / p["model_file"]
-            return path if path.exists() else None
+            try:
+                obj = _client.get_object(Bucket=_BUCKET, Key=MODELS_PREFIX + p["model_file"])
+            except ClientError as e:
+                if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+                    return None
+                raise
+            return obj["Body"].read()
     return None

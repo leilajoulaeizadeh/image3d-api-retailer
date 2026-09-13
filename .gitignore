@@ -4,3 +4,5 @@ __pycache__/
 .streamlit/secrets.toml
 .DS_Store
 .env
+storage/models/*.glb
+storage/products.json
