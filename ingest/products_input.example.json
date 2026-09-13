@@ -1,0 +1,19 @@
+[
+  {
+    "id": "oak-side-table",
+    "name": "Oak Side Table",
+    "category": "Furniture",
+    "price": 179.00,
+    "description": "Solid oak side table with a round tapered top.",
+    "photo": "photos/oak-side-table.jpg",
+    "label_hint": "table"
+  },
+  {
+    "id": "canvas-tote",
+    "name": "Canvas Tote Bag",
+    "category": "Accessories",
+    "price": 24.99,
+    "description": "Heavyweight canvas tote with reinforced handles.",
+    "photo": "photos/canvas-tote.jpg"
+  }
+]

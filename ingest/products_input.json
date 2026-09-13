@@ -1,0 +1,29 @@
+[
+  {
+    "id": "mesh-office-chair",
+    "name": "Mesh Back Office Chair",
+    "category": "Furniture",
+    "price": 189.00,
+    "description": "Ergonomic task chair with a breathable black mesh back, navy upholstered seat, and a five-star caster base.",
+    "photo": "photos/333.jpeg",
+    "label_hint": "chair"
+  },
+  {
+    "id": "chintz-sofa",
+    "name": "Chintz Floral Sofa",
+    "category": "Furniture",
+    "price": 1299.00,
+    "description": "Rolled-arm sofa upholstered in a floral and check mix, with a skirted base.",
+    "photo": "photos/room_image2.jpeg",
+    "label_hint": "couch"
+  },
+  {
+    "id": "teal-upholstered-bed",
+    "name": "Teal Upholstered Platform Bed",
+    "category": "Furniture",
+    "price": 799.00,
+    "description": "Platform bed with a tall teal upholstered headboard and dark wood frame.",
+    "photo": "photos/bedroom_photo.jpeg",
+    "label_hint": "bed"
+  }
+]
