@@ -69,18 +69,22 @@ if selected is not None:
 
     st.subheader(f"{product['name']} — ${product['price']:.2f}")
     st.caption(f"{product['category']}  ·  {product['description']}")
-    if product.get("has_photo"):
-        photo = _photo(product["id"])
-        if photo:
-            st.image(photo, width=280, caption="Original photo")
-    with st.spinner("Loading 3D model…"):
-        try:
-            mesh_url = api.get_model_data_url(product["id"])
-        except api.ApiError as e:
-            st.error(f"Could not load this product's 3D model: {e}")
-            st.stop()
-    _show_viewer(mesh_url)
-    st.caption("Drag to rotate, scroll to zoom — same viewer a retailer would embed on a product page.")
+
+    photo_col, model_col = st.columns(2)
+    with photo_col:
+        if product.get("has_photo"):
+            photo = _photo(product["id"])
+            if photo:
+                st.image(photo, use_container_width=True, caption="Original photo")
+    with model_col:
+        with st.spinner("Loading 3D model…"):
+            try:
+                mesh_url = api.get_model_data_url(product["id"])
+            except api.ApiError as e:
+                st.error(f"Could not load this product's 3D model: {e}")
+                st.stop()
+        _show_viewer(mesh_url)
+        st.caption("Drag to rotate, scroll to zoom — same viewer a retailer would embed on a product page.")
 
 else:
     categories = sorted({p["category"] for p in products})
