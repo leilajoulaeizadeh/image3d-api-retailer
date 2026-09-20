@@ -58,6 +58,24 @@ def list_products() -> list[dict[str, Any]]:
     return r.json()["products"]
 
 
+def get_photo_data_url(product_id: str) -> str | None:
+    """The product's original photo as a data URL, or None if it has none."""
+    try:
+        r = requests.get(
+            f"{_base_url()}/api/products/{product_id}/photo",
+            headers=_headers(), timeout=15,
+        )
+    except requests.RequestException as e:
+        raise ApiError(f"could not reach the catalog API: {e}") from e
+    if r.status_code == 404:
+        return None
+    if not r.ok:
+        raise ApiError(_detail(r))
+    mime = r.headers.get("Content-Type", "image/jpeg")
+    b64 = base64.b64encode(r.content).decode()
+    return f"data:{mime};base64,{b64}"
+
+
 def get_model_data_url(product_id: str) -> str:
     try:
         r = requests.get(

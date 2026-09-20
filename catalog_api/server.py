@@ -66,5 +66,18 @@ async def get_model(product_id: str, x_api_key: str | None = Header(default=None
     return Response(content=data, media_type="model/gltf-binary")
 
 
+@app.get("/api/products/{product_id}/photo")
+async def get_photo(product_id: str, x_api_key: str | None = Header(default=None)):
+    """The original retailer photo the product's mesh was reconstructed from
+    (image_reconstruction's streamlit_app publishes it alongside the mesh)."""
+    _require_key(x_api_key)
+    if storage.get_product(product_id) is None:
+        raise HTTPException(status_code=404, detail="product not found")
+    data, content_type = storage.image_bytes(product_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="no photo for this product")
+    return Response(content=data, media_type=content_type)
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8100)))

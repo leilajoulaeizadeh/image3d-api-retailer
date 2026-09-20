@@ -17,6 +17,7 @@ from botocore.exceptions import ClientError
 
 PRODUCTS_KEY = "products.json"
 MODELS_PREFIX = "models/"
+IMAGES_PREFIX = "images/"
 
 
 def _required(name: str) -> str:
@@ -47,15 +48,22 @@ def _load() -> list[dict[str, Any]]:
     return json.loads(obj["Body"].read())
 
 
+def _public(p: dict[str, Any]) -> dict[str, Any]:
+    """Metadata only -- model_file/image_file are internal storage details;
+    has_photo tells the retailer site whether it's worth fetching one."""
+    d = {k: v for k, v in p.items() if k not in ("model_file", "image_file")}
+    d["has_photo"] = "image_file" in p
+    return d
+
+
 def list_products() -> list[dict[str, Any]]:
-    """Metadata only, no model_file path (that's an internal storage detail)."""
-    return [{k: v for k, v in p.items() if k != "model_file"} for p in _load()]
+    return [_public(p) for p in _load()]
 
 
 def get_product(product_id: str) -> dict[str, Any] | None:
     for p in _load():
         if p["id"] == product_id:
-            return {k: v for k, v in p.items() if k != "model_file"}
+            return _public(p)
     return None
 
 
@@ -70,3 +78,21 @@ def model_bytes(product_id: str) -> bytes | None:
                 raise
             return obj["Body"].read()
     return None
+
+
+def image_bytes(product_id: str) -> tuple[bytes, str] | tuple[None, None]:
+    """(bytes, content_type) of the product's original photo, or (None, None)
+    if it has none."""
+    for p in _load():
+        if p["id"] == product_id:
+            image_file = p.get("image_file")
+            if not image_file:
+                return None, None
+            try:
+                obj = _client.get_object(Bucket=_BUCKET, Key=IMAGES_PREFIX + image_file)
+            except ClientError as e:
+                if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+                    return None, None
+                raise
+            return obj["Body"].read(), obj.get("ContentType") or "image/jpeg"
+    return None, None

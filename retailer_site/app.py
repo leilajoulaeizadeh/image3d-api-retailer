@@ -32,6 +32,14 @@ except api.ApiError as e:
     st.stop()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _photo(product_id: str) -> str | None:
+    try:
+        return api.get_photo_data_url(product_id)
+    except api.ApiError:
+        return None
+
+
 def _show_viewer(mesh_url: str, height: int = 480) -> None:
     st.components.v1.html(
         f"""
@@ -61,6 +69,10 @@ if selected is not None:
 
     st.subheader(f"{product['name']} — ${product['price']:.2f}")
     st.caption(f"{product['category']}  ·  {product['description']}")
+    if product.get("has_photo"):
+        photo = _photo(product["id"])
+        if photo:
+            st.image(photo, width=280, caption="Original photo")
     with st.spinner("Loading 3D model…"):
         try:
             mesh_url = api.get_model_data_url(product["id"])
@@ -82,7 +94,11 @@ else:
                     with st.container(border=True):
                         st.markdown(f"**{product['name']}**")
                         st.caption(product["category"])
-                        st.write(product["description"])
+                        photo = _photo(product["id"]) if product.get("has_photo") else None
+                        if photo:
+                            st.image(photo, use_container_width=True)
+                        else:
+                            st.write(product["description"])
                         st.markdown(f"**${product['price']:.2f}**")
                         if st.button("🧊 View in 3D", key=f"view-{cat}-{product['id']}"):
                             st.session_state.selected_product = product["id"]
