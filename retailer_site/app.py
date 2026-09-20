@@ -37,13 +37,18 @@ def _photo(product_id: str) -> str | None:
 
 
 def _show_photo(data_url: str, height: int) -> None:
-    """A photo at a fixed height regardless of its original aspect ratio, so
-    photos of different shapes still line up (card grid, and next to the 3D
-    viewer in the detail view)."""
+    """A photo boxed to a fixed height regardless of its original aspect
+    ratio, so photos of different shapes still line up (card grid, and next
+    to the 3D viewer in the detail view) -- 'contain', not 'cover', so the
+    whole photo stays visible (letterboxed) instead of being cropped, which
+    'cover' would do more or less aggressively depending on viewport width."""
     st.markdown(
         f"""
-        <img src="{data_url}" style="width:100%;height:{height}px;object-fit:cover;
-             border-radius:8px;border:1px solid #e6e6e6;">
+        <div style="width:100%;height:{height}px;border-radius:8px;
+             border:1px solid #e6e6e6;background:#fafafa;
+             display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          <img src="{data_url}" style="max-width:100%;max-height:100%;object-fit:contain;">
+        </div>
         """,
         unsafe_allow_html=True,
     )
