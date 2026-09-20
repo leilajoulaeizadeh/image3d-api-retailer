@@ -17,10 +17,6 @@ import api_client as api
 st.set_page_config(page_title="Acme Home — Demo Store", page_icon="🛋️", layout="wide")
 
 st.title("🛋️ Acme Home")
-st.caption(
-    "Demo retailer storefront — product 3D models are served on demand from "
-    "the Image3D catalog API, the same way a real retailer's site would."
-)
 
 if "selected_product" not in st.session_state:
     st.session_state.selected_product = None
@@ -40,6 +36,19 @@ def _photo(product_id: str) -> str | None:
         return None
 
 
+def _show_photo(data_url: str, height: int) -> None:
+    """A photo at a fixed height regardless of its original aspect ratio, so
+    photos of different shapes still line up (card grid, and next to the 3D
+    viewer in the detail view)."""
+    st.markdown(
+        f"""
+        <img src="{data_url}" style="width:100%;height:{height}px;object-fit:cover;
+             border-radius:8px;border:1px solid #e6e6e6;">
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _show_viewer(mesh_url: str, height: int = 480) -> None:
     st.components.v1.html(
         f"""
@@ -57,6 +66,12 @@ def _show_viewer(mesh_url: str, height: int = 480) -> None:
 
 selected = st.session_state.selected_product
 
+if selected is None:
+    st.caption(
+        "Demo retailer storefront — product 3D models are served on demand from "
+        "the Image3D catalog API, the same way a real retailer's site would."
+    )
+
 if selected is not None:
     product = next((p for p in products if p["id"] == selected), None)
     if product is None:
@@ -68,14 +83,18 @@ if selected is not None:
         st.rerun()
 
     st.subheader(f"{product['name']} — ${product['price']:.2f}")
-    st.caption(f"{product['category']}  ·  {product['description']}")
+    if product["description"]:
+        st.caption(product["description"])
+
+    DETAIL_HEIGHT = 480
 
     photo_col, model_col = st.columns(2)
     with photo_col:
         if product.get("has_photo"):
             photo = _photo(product["id"])
             if photo:
-                st.image(photo, use_container_width=True, caption="Original photo")
+                _show_photo(photo, DETAIL_HEIGHT)
+                st.caption("Original photo")
     with model_col:
         with st.spinner("Loading 3D model…"):
             try:
@@ -83,10 +102,12 @@ if selected is not None:
             except api.ApiError as e:
                 st.error(f"Could not load this product's 3D model: {e}")
                 st.stop()
-        _show_viewer(mesh_url)
+        _show_viewer(mesh_url, DETAIL_HEIGHT)
         st.caption("Drag to rotate, scroll to zoom — same viewer a retailer would embed on a product page.")
 
 else:
+    CARD_PHOTO_HEIGHT = 200
+
     categories = sorted({p["category"] for p in products})
     tabs = st.tabs(["All"] + categories)
     for tab, cat in zip(tabs, ["All"] + categories):
@@ -100,7 +121,7 @@ else:
                         st.caption(product["category"])
                         photo = _photo(product["id"]) if product.get("has_photo") else None
                         if photo:
-                            st.image(photo, use_container_width=True)
+                            _show_photo(photo, CARD_PHOTO_HEIGHT)
                         else:
                             st.write(product["description"])
                         st.markdown(f"**${product['price']:.2f}**")
